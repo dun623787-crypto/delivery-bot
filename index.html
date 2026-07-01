@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Доставка з Адмінкою</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: #f4f4f5; margin: 0; padding: 15px; color: #333;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        h2 { font-size: 20px; margin-bottom: 15px; color: #111; display: flex; justify-content: space-between; align-items: center; }
+        .block { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        
+        /* Меню */
+        .product { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+        .product:last-child { border-bottom: none; }
+        .product-name { font-weight: bold; font-size: 16px; }
+        .product-price { color: #28a745; font-size: 14px; margin-top: 4px; font-weight: bold; }
+        
+        button { border: none; cursor: pointer; border-radius: 8px; font-weight: bold; }
+        .add-btn { background: #007bff; color: white; padding: 8px 14px; }
+        .submit-btn { width: 100%; background: #28a745; color: white; padding: 12px; font-size: 16px; }
+        .admin-toggle-btn { background: #6c757d; color: white; padding: 5px 10px; font-size: 12px; }
+        .delete-btn { background: #dc3545; color: white; padding: 5px 10px; font-size: 12px; margin-left: 10px; }
+        
+        .cart-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px; background: #f8f9fa; padding: 8px; border-radius: 6px; }
+        .total { font-weight: bold; font-size: 18px; margin: 15px 0; display: flex; justify-content: space-between; }
+        
+        input, textarea { width: 100%; padding: 10px; margin: 8px 0 15px 0; box-sizing: border-box; border: 1px solid #e1e1e1; border-radius: 8px; font-size: 15px; }
+        
+        /* Адмінка */
+        #admin-panel { display: none; background: #fff3cd; border: 1px solid #ffeeba; }
+        .admin-prod-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #dee2e6; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <div style="text-align: right; margin-bottom: 10px;">
+        <button class="admin-toggle-btn" onclick="checkAdminPassword()">⚙️ Адмінка</button>
+    </div>
+
+    <div id="admin-panel" class="block">
+        <h2 style="color: #856404;">Панель адміністратора</h2>
+        <form onsubmit="addNewProduct(event)">
+            <label>Назва товару (напр., 🍕 Піца):</label>
+            <input type="text" id="newProdName" required placeholder="Маргарита">
+            
+            <label>Ціна (грн):</label>
+            <input type="number" id="newProdPrice" required placeholder="250">
+            
+            <button type="submit" class="submit-btn" style="background: #ffc107; color: #212529;">Додати товар в меню</button>
+        </form>
+        
+        <h3>Поточні товари (можна видалити):</h3>
+        <div id="admin-products-list"></div>
+    </div>
+
+    <div class="block">
+        <h2>📋 Меню доставки</h2>
+        <div id="menu-container">
+            </div>
+    </div>
+
+    <div class="block">
+        <h2>🛒 Ваше замовлення</h2>
+        <div id="cart-items" style="color: #666; font-style: italic;">Кошик порожній</div>
+        <div class="total">
+            <span>Разом:</span>
+            <span><span id="total-price">0</span> грн</span>
+        </div>
+
+        <form onsubmit="sendOrder(event)">
+            <label><b>Ваше ім'я:</b></label>
+            <input type="text" id="userName" required placeholder="Іван">
+
+            <label><b>Телефон:</b></label>
+            <input type="tel" id="userPhone" required placeholder="+380...">
+
+            <label><b>Адреса доставки:</b></label>
+            <textarea id="userAddress" rows="3" required placeholder="Місто, вулиця..."></textarea>
+
+            <button type="submit" class="submit-btn">Оформити замовлення</button>
+        </form>
+    </div>
+</div>
+
+<script>
+    // --- НАЛАШТУВАННЯ ТЕЛЕГРАМ ---
+    const TELEGRAM_TOKEN = 'СЮДИ_ВСТАВ_ТОКЕН_ВІД_BOTFATHER';
+    const TELEGRAM_CHAT_ID = 'СЮДИ_ВСТАВ_СВІЙ_ID_ВІД_USERINFOBOT';
+    const ADMIN_PASSWORD = '1111'; // Секретний пароль для входу в адмінку
+    // ---------------------------------
+
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+    if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+        document.getElementById('userName').value = tg.initDataUnsafe.user.first_name;
+    }
+
+    // База даних товарів (завантажується з пам'яті або створюється порожньою)
+    let products = JSON.parse(localStorage.getItem('delivery_products')) || [];
+    let cart = [];
+
+    // Відобразити меню та адмінку при завантаженні
+    renderMenu();
+
+    function checkAdminPassword() {
+        const panel = document.getElementById('admin-panel');
+        if (panel.style.display === 'block') {
+            panel.style.display = 'none';
+        } else {
+            const pass = prompt('Введіть пароль адміністратора:');
+            if (pass === ADMIN_PASSWORD) {
+                panel.style.display = 'block';
+                renderAdminProducts();
+            } else if (pass !== null) {
+                alert('Невірний пароль!');
+            }
+        }
+    }
+
+    // Додавання нового товару в адмінці
+    function addNewProduct(event) {
+        event.preventDefault();
+        const name = document.getElementById('newProdName').value;
+        const price = parseInt(document.getElementById('newProdPrice').value);
+
+        products.push({ id: Date.now(), name, price });
+        localStorage.setItem('delivery_products', JSON.stringify(products));
+
+        document.getElementById('newProdName').value = '';
+        document.getElementById('newProdPrice').value = '';
+
+        renderMenu();
+        renderAdminProducts();
+        alert('Товар додано!');
+    }
+
+    // Видалення товару в адмінці
+    function deleteProduct(id) {
+        products = products.filter(p => p.id !== id);
+        localStorage.setItem('delivery_products', JSON.stringify(products));
+        renderMenu();
+        renderAdminProducts();
+    }
+
+    // Виведення товарів на сайт для клієнтів
+    function renderMenu() {
+        const container = document.getElementById('menu-container');
+        if (products.length === 0) {
+            container.innerHTML = '<p style="color: #999; font-style: italic;">Меню порожнє. Зайдіть в адмінку та додайте товари!</p>';
+            return;
+        }
+        container.innerHTML = '';
+        products.forEach(p => {
+            container.innerHTML += `
+                <div class="product">
+                    <div class="product-info">
+                        <span class="product-name">${p.name}</span>
+                        <span class="product-price">${p.price} грн</span>
+                    </div>
+                    <button class="add-btn" onclick="addToCart('${p.name}', ${p.price})">+ Кошик</button>
+                </div>`;
+        });
+    }
+
+    // Виведення списку товарів в самій адмінці
+    function renderAdminProducts() {
+        const container = document.getElementById('admin-products-list');
+        container.innerHTML = '';
+        products.forEach(p => {
+            container.innerHTML += `
+                <div class="admin-prod-item">
+                    <span>${p.name} — <b>${p.price} грн</b></span>
+                    <button class="delete-btn" onclick="deleteProduct(${p.id})">Видалити</button>
+                </div>`;
+        });
+    }
+
+    // Логіка кошика
+    function addToCart(name, price) {
+        let item = cart.find(i => i.name === name);
+        if (item) { item.count++; } else { cart.push({ name, price, count: 1 }); }
+        updateCartHTML();
+    }
+
+    function updateCartHTML() {
+        const cartContainer = document.getElementById('cart-items');
+        const totalContainer = document.getElementById('total-price');
+        if (cart.length === 0) { cartContainer.innerHTML = 'Кошик порожній'; totalContainer.innerText = '0'; return; }
+        cartContainer.innerHTML = '';
+        let total = 0;
+        cart.forEach(item => {
+            let itemTotal = item.price * item.count;
+            total += itemTotal;
+            cartContainer.innerHTML += `
+                <div class="cart-item">
+                    <span>${item.name} <b>x${item.count}</b></span>
+                    <span>${itemTotal} грн</span>
+                </div>`;
+        });
+        totalContainer.innerText = total;
+    }
+
+    // Відправка замовлення в Телеграм
+    function sendOrder(event) {
+        event.preventDefault();
+        if (cart.length === 0) { alert('Кошик порожній!'); return; }
+
+        const name = document.getElementById('userName').value;
+        const phone = document.getElementById('userPhone').value;
+        const address = document.getElementById('userAddress').value;
+        const total = document.getElementById('total-price').innerText;
+
+        let orderItemsText = cart.map(item => `• ${item.name} x${item.count} (${item.price * item.count} грн)`).join('\n');
+        
+        let message = `🔔 <b>НОВЕ ЗАМОВЛЕННЯ!</b>\n\n`;
+        message += `👤 <b>Клієнт:</b> ${name}\n`;
+        message += `📞 <b>Телефон:</b> ${phone}\n`;
+        message += `📍 <b>Адреса:</b> ${address}\n\n`;
+        message += `🛒 <b>Замовлення:</b>\n${orderItemsText}\n\n`;
+        message += `💰 <b>Разом до сплати:</b> ${total} грн`;
+
+        const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' })
+        })
+        .then(response => {
+            if (response.ok) {
+                alert('Замовлення надіслано успішно!');
+                cart = [];
+                updateCartHTML();
+                document.querySelector('form').reset();
+                if(tg) tg.close();
+            } else { alert('Помилка відправки!'); }
+        });
+    }
+</script>
+</body>
+</html>
